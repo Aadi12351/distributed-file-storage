@@ -8,8 +8,8 @@ class FileResponse(BaseModel):
     stored_filename: str
     file_size: int
     content_type: str
-    folder: str
     created_at: datetime
+    folder_id: int | None = None
 
     class Config:
         from_attributes = True
@@ -23,8 +23,8 @@ class FileDetailResponse(BaseModel):
     storage_path: str
     file_size: int
     content_type: str
-    folder: str
     created_at: datetime
+    folder_id: int | None = None
 
     class Config:
         from_attributes = True

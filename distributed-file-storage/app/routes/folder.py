@@ -12,6 +12,11 @@ from fastapi import HTTPException
 from app.schemas.folder_update import FolderRename
 
 from app.schemas.move_folder import MoveFolderRequest
+from fastapi import HTTPException
+
+from app.schemas.folder import FolderContentsResponse
+
+from app.services.folder_service import get_folder_contents
 from app.services.folder_service import (
     create_folder,
     get_user_folders,
@@ -144,3 +149,26 @@ def move(
         "message": "Folder moved successfully",
         "parent_folder_id": folder.parent_folder_id
     }
+@router.get(
+    "/{folder_id}/contents",
+    response_model=FolderContentsResponse
+)
+def folder_contents(
+    folder_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+
+    result = get_folder_contents(
+        db=db,
+        owner_id=current_user.id,
+        folder_id=folder_id
+    )
+
+    if result is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Folder not found"
+        )
+
+    return result

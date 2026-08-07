@@ -1,4 +1,12 @@
-from sqlalchemy import Column, Integer, String, ForeignKey, BigInteger, DateTime
+from sqlalchemy import (
+    Column,
+    Integer,
+    String,
+    ForeignKey,
+    BigInteger,
+    DateTime,
+    Boolean
+)
 from sqlalchemy.sql import func
 from sqlalchemy.orm import relationship
 
@@ -35,11 +43,12 @@ class File(Base):
         BigInteger,
         nullable=False
     )
-    folder = Column(
-    String(255),
-    nullable=False,
-    default="root"
-   )
+
+    folder_id = Column(
+        Integer,
+        ForeignKey("folders.id"),
+        nullable=True
+    )
 
     content_type = Column(
         String(100),
@@ -51,7 +60,27 @@ class File(Base):
         server_default=func.now()
     )
 
+    # -------- Soft Delete --------
+
+    is_deleted = Column(
+        Boolean,
+        default=False,
+        nullable=False
+    )
+
+    deleted_at = Column(
+        DateTime(timezone=True),
+        nullable=True
+    )
+
+    # -------- Relationships --------
+
     owner = relationship(
-    "User",
-    back_populates="files"
-)
+        "User",
+        back_populates="files"
+    )
+
+    folder = relationship(
+        "Folder",
+        back_populates="files"
+    )

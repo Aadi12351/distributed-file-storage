@@ -148,7 +148,7 @@ def move(
         db=db,
         file_id=file_id,
         owner_id=current_user.id,
-        folder=request.folder
+        folder_id=request.folder_id
     )
 
     if file is None:
@@ -158,6 +158,7 @@ def move(
         )
 
     return {
-        "message": "File moved successfully",
-        "folder": file.folder
-    }
+    "message": "File moved successfully",
+    "folder_id": file.folder_id,
+    "folder_name": file.folder.name if file.folder else None
+}

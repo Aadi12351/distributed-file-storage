@@ -2,16 +2,11 @@ import os
 import shutil
 import uuid
 
-from fastapi import UploadFile
+from fastapi import UploadFile, HTTPException
 from sqlalchemy.orm import Session
 
 from app.models.file import File
-from fastapi import HTTPException
-
-from sqlalchemy.orm import Session
-from app.models.file import File
-
-
+from app.models.folder import Folder
 
 UPLOAD_DIRECTORY = "uploads"
 
@@ -21,9 +16,26 @@ os.makedirs(UPLOAD_DIRECTORY, exist_ok=True)
 def upload_file(
     db: Session,
     file: UploadFile,
-    owner_id: int
+    owner_id: int,
+    folder_id: int | None = None
 ):
-    # Generate unique filename
+    # Verify folder exists (if provided)
+    if folder_id is not None:
+        folder = (
+            db.query(Folder)
+            .filter(
+                Folder.id == folder_id,
+                Folder.owner_id == owner_id
+            )
+            .first()
+        )
+
+        if folder is None:
+            raise HTTPException(
+                status_code=404,
+                detail="Folder not found"
+            )
+
     extension = os.path.splitext(file.filename)[1]
 
     stored_filename = f"{uuid.uuid4()}{extension}"
@@ -33,7 +45,6 @@ def upload_file(
         stored_filename
     )
 
-    # Save file
     with open(storage_path, "wb") as buffer:
         shutil.copyfileobj(file.file, buffer)
 
@@ -45,7 +56,8 @@ def upload_file(
         stored_filename=stored_filename,
         storage_path=storage_path,
         file_size=file_size,
-        content_type=file.content_type
+        content_type=file.content_type,
+        folder_id=folder_id
     )
 
     db.add(new_file)
@@ -65,6 +77,8 @@ def get_user_files(
         .order_by(File.created_at.desc())
         .all()
     )
+
+
 def get_file_by_id(
     db: Session,
     file_id: int,
@@ -86,6 +100,8 @@ def get_file_by_id(
         )
 
     return file
+
+
 def delete_file(
     db: Session,
     file_id: int,
@@ -115,6 +131,8 @@ def delete_file(
     return {
         "message": "File deleted successfully"
     }
+
+
 def rename_file(
     db: Session,
     file_id: int,
@@ -133,8 +151,6 @@ def rename_file(
     if file is None:
         return None
 
-    import os
-
     extension = os.path.splitext(file.original_filename)[1]
 
     if not new_name.endswith(extension):
@@ -146,6 +162,8 @@ def rename_file(
     db.refresh(file)
 
     return file
+
+
 def get_file_details(
     db: Session,
     file_id: int,
@@ -161,11 +179,13 @@ def get_file_details(
     )
 
     return file
+
+
 def move_file(
     db: Session,
     file_id: int,
     owner_id: int,
-    folder: str
+    folder_id: int | None
 ):
     file = (
         db.query(File)
@@ -179,7 +199,20 @@ def move_file(
     if file is None:
         return None
 
-    file.folder = folder
+    if folder_id is not None:
+        folder = (
+            db.query(Folder)
+            .filter(
+                Folder.id == folder_id,
+                Folder.owner_id == owner_id
+            )
+            .first()
+        )
+
+        if folder is None:
+            return False
+
+    file.folder_id = folder_id
 
     db.commit()
     db.refresh(file)

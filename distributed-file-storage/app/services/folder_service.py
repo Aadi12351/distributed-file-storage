@@ -2,6 +2,8 @@ from sqlalchemy.orm import Session
 
 from app.models.folder import Folder
 
+from app.models.file import File
+
 
 
 def create_folder(
@@ -118,3 +120,63 @@ def move_folder(
     db.refresh(folder)
 
     return folder
+def get_folder_contents(
+    db: Session,
+    owner_id: int,
+    folder_id: int
+):
+
+    folder = (
+        db.query(Folder)
+        .filter(
+            Folder.id == folder_id,
+            Folder.owner_id == owner_id
+        )
+        .first()
+    )
+
+    if folder is None:
+        return None
+
+    folders = (
+        db.query(Folder)
+        .filter(
+            Folder.parent_folder_id == folder_id,
+            Folder.owner_id == owner_id
+        )
+        .order_by(Folder.name.asc())
+        .all()
+    )
+
+    files = (
+        db.query(File)
+        .filter(
+            File.folder_id == folder_id,
+            File.owner_id == owner_id
+        )
+        .order_by(File.original_filename.asc())
+        .all()
+    )
+
+    breadcrumb = []
+
+    current = folder
+
+    while current:
+
+        breadcrumb.insert(
+            0,
+            {
+                "id": current.id,
+                "name": current.name
+            }
+        )
+
+        current = current.parent
+
+    return {
+        "folder": folder,
+        "breadcrumb": breadcrumb,
+        "folders": folders,
+        "files": files
+    }
