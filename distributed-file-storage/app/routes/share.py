@@ -1,19 +1,49 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import (
+    APIRouter,
+    Depends,
+    HTTPException
+)
 
 from sqlalchemy.orm import Session
 
 from app.database.session import get_db
 from app.auth.dependencies import get_current_user
+
 from app.models.user import User
 
-from app.services.share_service import create_file_share
+from app.services.share_service import (
+    create_file_share,
+    get_shared_file,
+    list_my_shares,
+    revoke_share
+)
 
 
 router = APIRouter(
     prefix="/share",
-    tags=["Sharing"]
+    tags=["Share"]
 )
 
+
+# --------------------------------------------------
+# LIST MY SHARES
+# --------------------------------------------------
+
+@router.get("")
+def get_my_shares(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+
+    return list_my_shares(
+        db,
+        current_user.id
+    )
+
+
+# --------------------------------------------------
+# CREATE FILE SHARE
+# --------------------------------------------------
 
 @router.post("/files/{file_id}")
 def share_file(
@@ -21,6 +51,7 @@ def share_file(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
+
     share = create_file_share(
         db,
         current_user.id,
@@ -40,3 +71,56 @@ def share_file(
         "token": share.token,
         "permission": share.permission
     }
+
+
+# --------------------------------------------------
+# REVOKE SHARE
+# --------------------------------------------------
+
+@router.delete("/{share_id}")
+def delete_share(
+    share_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+
+    share = revoke_share(
+        db,
+        current_user.id,
+        share_id
+    )
+
+    if share is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Share not found"
+        )
+
+    return {
+        "message": "Share revoked successfully",
+        "share_id": share_id
+    }
+
+
+# --------------------------------------------------
+# ACCESS PUBLIC SHARE
+# --------------------------------------------------
+
+@router.get("/{token}")
+def access_shared_file(
+    token: str,
+    db: Session = Depends(get_db)
+):
+
+    result, error = get_shared_file(
+        db,
+        token
+    )
+
+    if error:
+        raise HTTPException(
+            status_code=404,
+            detail=error
+        )
+
+    return result
