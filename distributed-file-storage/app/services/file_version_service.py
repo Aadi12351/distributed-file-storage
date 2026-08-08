@@ -122,14 +122,14 @@ def list_file_versions(
 ):
 
     file = (
-        db.query(File)
-        .filter(
-            File.id == file_id,
-            File.owner_id == owner_id
-        )
-        .first()
+    db.query(File)
+    .filter(
+        File.id == file_id,
+        File.owner_id == owner_id,
+        File.is_deleted.is_(False)
     )
-
+    .first()
+)
     if not file:
         return None, "File not found"
 
@@ -274,6 +274,62 @@ def restore_file_version(
     file.file_size = version.file_size
 
     file.content_type = version.content_type
+
+    db.commit()
+    db.refresh(file)
+
+    return file, None
+def replace_file_with_version(
+    db: Session,
+    owner_id: int,
+    file_id: int,
+    new_file
+):
+    file = (
+        db.query(File)
+        .filter(
+            File.id == file_id,
+            File.owner_id == owner_id,
+            File.is_deleted.is_(False)
+        )
+        .first()
+    )
+
+    if not file:
+        return None, "File not found"
+
+    # --------------------------------------------------------
+    # Create version snapshot BEFORE replacing current file
+    # --------------------------------------------------------
+
+    version, error = create_file_version(
+        db=db,
+        file=file
+    )
+
+    if error:
+        return None, error
+
+    # --------------------------------------------------------
+    # Replace physical file
+    # --------------------------------------------------------
+
+    try:
+        with open(file.storage_path, "wb") as buffer:
+            shutil.copyfileobj(new_file.file, buffer)
+
+    except OSError as exc:
+        return None, f"Unable to replace file: {exc}"
+
+    # --------------------------------------------------------
+    # Update metadata
+    # --------------------------------------------------------
+
+    file.original_filename = new_file.filename
+    file.file_size = Path(file.storage_path).stat().st_size
+    file.content_type = (
+        new_file.content_type or "application/octet-stream"
+    )
 
     db.commit()
     db.refresh(file)

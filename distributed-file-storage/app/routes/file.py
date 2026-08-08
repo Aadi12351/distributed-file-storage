@@ -32,7 +32,7 @@ from app.schemas.file_version import FileVersionResponse
 from app.services.file_version_service import (
     create_file_version,
     list_file_versions,
-    get_file_version,
+    get_file_version,  
     restore_file_version
 )
 
@@ -59,6 +59,9 @@ from app.schemas.file_metadata import FileMetadataResponse
 
 from app.services.file_metadata_service import (
     get_file_metadata
+)
+from app.services.file_version_service import (
+    replace_file_with_version
 )
 
 router = APIRouter(
@@ -458,6 +461,34 @@ def get_versions(
         )
 
     return versions
+# ============================================================
+# GET SINGLE VERSION
+# ============================================================
+
+@router.get(
+    "/{file_id}/versions/{version_id}",
+    response_model=FileVersionResponse
+)
+def get_single_version(
+    file_id: int,
+    version_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    version, error = get_file_version(
+        db=db,
+        owner_id=current_user.id,
+        file_id=file_id,
+        version_id=version_id
+    )
+
+    if error:
+        raise HTTPException(
+            status_code=404,
+            detail=error
+        )
+
+    return version
 @router.get(
     "/{file_id}/versions/{version_id}/download"
 )
@@ -516,4 +547,31 @@ def restore_version(
         "filename": file.original_filename,
         "file_size": file.file_size,
         "content_type": file.content_type
+    }
+@router.put("/{file_id}/replace")
+def replace(
+    file_id: int,
+    file: UploadFile = FastAPIFile(...),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    updated_file, error = replace_file_with_version(
+        db=db,
+        owner_id=current_user.id,
+        file_id=file_id,
+        new_file=file
+    )
+
+    if error:
+        raise HTTPException(
+            status_code=404,
+            detail=error
+        )
+
+    return {
+        "message": "File replaced successfully",
+        "file_id": updated_file.id,
+        "filename": updated_file.original_filename,
+        "file_size": updated_file.file_size,
+        "content_type": updated_file.content_type
     }
