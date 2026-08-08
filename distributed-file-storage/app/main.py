@@ -7,7 +7,7 @@ from app.database.database import Base, engine
 from app.models.user import User
 from app.models.file import File
 from app.models.folder import Folder
-
+from app.models.file_version import FileVersion
 # Create all database tables
 Base.metadata.create_all(bind=engine)
 
@@ -27,6 +27,12 @@ from app.routes.trash import router as trash_router
 
 #share
 from app.routes.share import router as share_router
+
+#dashboard
+from app.routes.dashboard import router as dashboard_router
+
+#Version
+from app.routes.file_version import router as file_version_router
 
 app = FastAPI(
     title="Distributed File Storage API",
@@ -61,3 +67,5 @@ app.include_router(search_router)
 app.include_router(folder_tree_router)
 app.include_router(trash_router)
 app.include_router(share_router)
+app.include_router(dashboard_router)
+app.include_router(file_version_router)

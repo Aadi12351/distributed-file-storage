@@ -8,12 +8,32 @@ from app.models.share import Share
 from app.models.file import File
 
 
+ALLOWED_PERMISSIONS = {
+    "view",
+    "download",
+    "edit",
+}
+
+
 def create_file_share(
     db: Session,
     owner_id: int,
-    file_id: int
+    file_id: int,
+    permission: str = "view",
+    expires_at=None
 ):
-    # Find the file belonging to the current user
+    # Validate permission
+    if permission not in ALLOWED_PERMISSIONS:
+        return None, "Invalid permission"
+
+    # Validate expiration
+    if expires_at is not None:
+        now = datetime.now(timezone.utc)
+
+        if expires_at <= now:
+            return None, "Expiration time must be in the future"
+
+    # Find file belonging to current user
     file = (
         db.query(File)
         .filter(
@@ -25,7 +45,7 @@ def create_file_share(
     )
 
     if not file:
-        return None
+        return None, "File not found"
 
     # Generate unique public token
     token = secrets.token_urlsafe(32)
@@ -35,8 +55,8 @@ def create_file_share(
         file_id=file_id,
         folder_id=None,
         token=token,
-        permission="view",
-        expires_at=None,
+        permission=permission,
+        expires_at=expires_at,
         password_hash=None
     )
 
@@ -44,14 +64,13 @@ def create_file_share(
     db.commit()
     db.refresh(share)
 
-    return share
+    return share, None
 
 
 def get_shared_file(
     db: Session,
     token: str
 ):
-    # Find share by public token
     share = (
         db.query(Share)
         .filter(
@@ -70,11 +89,11 @@ def get_shared_file(
         if share.expires_at <= now:
             return None, "Share link has expired"
 
-    # This endpoint currently supports file sharing
+    # Currently supports file shares
     if share.file_id is None:
         return None, "This share does not contain a file"
 
-    # Make sure the file still exists and isn't in trash
+    # Check file
     file = (
         db.query(File)
         .filter(
@@ -96,6 +115,7 @@ def get_shared_file(
         "created_at": share.created_at,
         "expires_at": share.expires_at
     }, None
+
 
 def get_shared_file_for_download(
     db: Session,
@@ -119,11 +139,16 @@ def get_shared_file_for_download(
         if share.expires_at <= now:
             return None, "Share link has expired"
 
-    # This endpoint currently supports file shares
+    # Currently supports file shares
     if share.file_id is None:
         return None, "This share does not contain a file"
 
-    # Make sure file exists and is not in trash
+    # IMPORTANT:
+    # view permission cannot download
+    if share.permission == "view":
+        return None, "Download permission required"
+
+    # Check file
     file = (
         db.query(File)
         .filter(
@@ -137,6 +162,7 @@ def get_shared_file_for_download(
         return None, "File not found"
 
     return file, None
+
 
 def list_my_shares(
     db: Session,

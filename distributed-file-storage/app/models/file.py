@@ -7,6 +7,7 @@ from sqlalchemy import (
     DateTime,
     Boolean
 )
+
 from sqlalchemy.sql import func
 from sqlalchemy.orm import relationship
 
@@ -14,9 +15,14 @@ from app.database.database import Base
 
 
 class File(Base):
+
     __tablename__ = "files"
 
-    id = Column(Integer, primary_key=True, index=True)
+    id = Column(
+        Integer,
+        primary_key=True,
+        index=True
+    )
 
     owner_id = Column(
         Integer,
@@ -60,7 +66,9 @@ class File(Base):
         server_default=func.now()
     )
 
-    # -------- Soft Delete --------
+    # ========================================================
+    # SOFT DELETE
+    # ========================================================
 
     is_deleted = Column(
         Boolean,
@@ -73,7 +81,9 @@ class File(Base):
         nullable=True
     )
 
-    # -------- Relationships --------
+    # ========================================================
+    # RELATIONSHIPS
+    # ========================================================
 
     owner = relationship(
         "User",
@@ -83,4 +93,10 @@ class File(Base):
     folder = relationship(
         "Folder",
         back_populates="files"
+    )
+
+    versions = relationship(
+        "FileVersion",
+        back_populates="file",
+        cascade="all, delete-orphan"
     )
