@@ -25,6 +25,9 @@ from app.routes.search import router as search_router
 from app.routes.folder_tree import router as folder_tree_router
 from app.routes.trash import router as trash_router
 
+#share
+from app.routes.share import router as share_router
+
 app = FastAPI(
     title="Distributed File Storage API",
     version="1.0.0",
@@ -57,3 +60,4 @@ def me(
 app.include_router(search_router)
 app.include_router(folder_tree_router)
 app.include_router(trash_router)
+app.include_router(share_router)
