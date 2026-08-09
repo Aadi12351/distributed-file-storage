@@ -73,11 +73,13 @@ def get_user_files(
 ):
     return (
         db.query(File)
-        .filter(File.owner_id == owner_id)
+        .filter(
+            File.owner_id == owner_id,
+            File.is_deleted.is_(False)
+        )
         .order_by(File.created_at.desc())
         .all()
     )
-
 
 def get_file_by_id(
     db: Session,
@@ -88,7 +90,8 @@ def get_file_by_id(
         db.query(File)
         .filter(
             File.id == file_id,
-            File.owner_id == owner_id
+            File.owner_id == owner_id,
+            File.is_deleted.is_(False)
         )
         .first()
     )
@@ -173,7 +176,8 @@ def get_file_details(
         db.query(File)
         .filter(
             File.id == file_id,
-            File.owner_id == owner_id
+            File.owner_id == owner_id,
+            File.is_deleted.is_(False)
         )
         .first()
     )

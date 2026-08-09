@@ -6,7 +6,9 @@ import {
 
 import AppLayout from "./components/layout/AppLayout";
 import Dashboard from "./pages/Dashboard";
+import MyDrive from "./pages/MyDrive";
 import Login from "./pages/Login";
+import Trash from "./pages/Trash";
 import ProtectedRoute from "./routes/ProtectedRoute";
 
 function App() {
@@ -14,10 +16,11 @@ function App() {
     <BrowserRouter>
       <Routes>
 
-        {/* Public */}
-        <Route path="/login" element={<Login />} />
+        <Route
+          path="/login"
+          element={<Login />}
+        />
 
-        {/* Protected */}
         <Route
           path="/"
           element={
@@ -28,6 +31,38 @@ function App() {
             </ProtectedRoute>
           }
         />
+
+        <Route
+          path="/files"
+          element={
+            <ProtectedRoute>
+              <AppLayout>
+                <MyDrive />
+              </AppLayout>
+            </ProtectedRoute>
+          }
+        />
+
+        <Route
+          path="*"
+          element={
+            <ProtectedRoute>
+              <AppLayout>
+                <Dashboard />
+              </AppLayout>
+            </ProtectedRoute>
+          }
+        />
+        <Route
+  path="/trash"
+  element={
+    <ProtectedRoute>
+      <AppLayout>
+        <Trash />
+      </AppLayout>
+    </ProtectedRoute>
+  }
+/>
 
       </Routes>
     </BrowserRouter>
