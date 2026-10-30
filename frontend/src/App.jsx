@@ -73,7 +73,7 @@ function Brand() {
   return (
     <div className="brand">
       <Cloud size={32} />
-      <span>File Drive</span>
+      <span>My Drive · CI/CD Test</span>
     </div>
   );
 }
