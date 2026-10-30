@@ -1,0 +1,80 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend
+  namespace: drive
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: drive-backend
+  template:
+    metadata:
+      labels:
+        app: drive-backend
+    spec:
+      initContainers:
+        - name: prepare-storage
+          image: drive-backend:v1
+          imagePullPolicy: Never
+          command: ["sh", "-c", "chown 10001:10001 /data && chmod 700 /data"]
+          securityContext:
+            runAsUser: 0
+          volumeMounts:
+            - name: data
+              mountPath: /data
+      containers:
+        - name: backend
+          image: drive-backend:v1
+          imagePullPolicy: Never
+          ports:
+            - containerPort: 8001
+          env:
+            - name: SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: drive-env
+                  key: SECRET_KEY
+            - name: ALGORITHM
+              value: HS256
+            - name: ACCESS_TOKEN_EXPIRE_MINUTES
+              value: "60"
+            - name: DATABASE_URL
+              value: sqlite:////data/drive.db
+            - name: CORS_ORIGINS
+              value: http://YOUR_EC2_PUBLIC_IP:8081
+            - name: MAX_UPLOAD_MB
+              value: "90"
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: "1"
+              memory: 512Mi
+          startupProbe:
+            httpGet:
+              path: /
+              port: 8001
+            periodSeconds: 5
+            failureThreshold: 30
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 8001
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 8001
+            periodSeconds: 10
+            failureThreshold: 3
+          volumeMounts:
+            - name: data
+              mountPath: /data
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: drive-data

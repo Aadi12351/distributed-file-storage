@@ -1,18 +1,30 @@
-# Put an HTTPS reverse proxy in front of this API on a persistent Docker server.
 services:
   backend:
-    build: .
+    image: drive-backend:v1
+    build:
+      context: .
+      dockerfile: Dockerfile
     restart: unless-stopped
     environment:
-      SECRET_KEY: ${SECRET_KEY:?Set a stable random SECRET_KEY in the server .env}
+      SECRET_KEY: ${SECRET_KEY:?Set SECRET_KEY in .env}
       ALGORITHM: HS256
       ACCESS_TOKEN_EXPIRE_MINUTES: 60
       DATABASE_URL: sqlite:////data/drive.db
-      CORS_ORIGINS: ${CORS_ORIGINS:?Set the exact HTTPS frontend origin}
-      MAX_UPLOAD_MB: ${MAX_UPLOAD_MB:-90}
-    ports:
-      - "127.0.0.1:8001:8001"
+      CORS_ORIGINS: ${CORS_ORIGINS:?Set CORS_ORIGINS in .env}
+      MAX_UPLOAD_MB: 90
     volumes:
       - drive-data:/data
+
+  frontend:
+    image: drive-frontend:v1
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    depends_on:
+      - backend
+
 volumes:
   drive-data:
