@@ -13,6 +13,8 @@ pipeline {
         KUBE_CONTEXT = 'kind-drive'
         KUBE_NAMESPACE = 'drive'
         KIND_CLUSTER = 'drive'
+        REPO_URL = 'https://github.com/Aadi12351/distributed-file-storage.git'
+        GITOPS_BRANCH = 'gitops'
     }
 
     stages {
@@ -22,7 +24,7 @@ pipeline {
 
                 git branch: 'main',
                     credentialsId: 'github-drive',
-                    url: 'https://github.com/Aadi12351/distributed-file-storage.git'
+                    url: env.REPO_URL
 
                 script {
                     def commit = sh(
@@ -39,12 +41,18 @@ pipeline {
             steps {
                 sh '''
                     set -eu
+
                     git --version
                     docker version
                     kind version
                     kubectl version --client
+
                     kubectl --context "$KUBE_CONTEXT" \
-                      get deployment backend frontend -n "$KUBE_NAMESPACE"
+                      get deployment backend frontend \
+                      -n "$KUBE_NAMESPACE"
+
+                    kubectl --context "$KUBE_CONTEXT" \
+                      get application drive -n argocd
                 '''
             }
         }
@@ -53,6 +61,7 @@ pipeline {
             steps {
                 sh '''
                     set -eu
+
                     docker build \
                       -t "drive-backend:$IMAGE_TAG" .
                 '''
@@ -98,6 +107,7 @@ pipeline {
             steps {
                 sh '''
                     set -eu
+
                     docker build \
                       -f frontend/Dockerfile \
                       -t "drive-frontend:$IMAGE_TAG" .
@@ -109,6 +119,7 @@ pipeline {
             steps {
                 sh '''
                     set -eu
+
                     kind load docker-image \
                       "drive-backend:$IMAGE_TAG" \
                       "drive-frontend:$IMAGE_TAG" \
@@ -117,58 +128,123 @@ pipeline {
             }
         }
 
-        stage('Prepare Deployment') {
+        stage('Update GitOps Branch') {
             steps {
-                sh '''
-                    set -eu
-                    mkdir -p rendered
+                withCredentials([
+                    gitUsernamePassword(
+                        credentialsId: 'github-drive',
+                        gitToolName: 'Default'
+                    )
+                ]) {
+                    sh '''
+                        set -eu
 
-                    kubectl set image \
-                      -f k8s/backend-deployment.yaml \
-                      backend="drive-backend:$IMAGE_TAG" \
-                      prepare-storage="drive-backend:$IMAGE_TAG" \
-                      --local -o yaml \
-                      > rendered/backend.yaml
+                        git clone \
+                          --single-branch \
+                          --branch "$GITOPS_BRANCH" \
+                          "$REPO_URL" \
+                          gitops-work
 
-                    kubectl set image \
-                      -f k8s/frontend-deployment.yaml \
-                      frontend="drive-frontend:$IMAGE_TAG" \
-                      --local -o yaml \
-                      > rendered/frontend.yaml
-                '''
+                        # Publish this build's Kubernetes configuration.
+                        cp k8s/*.yaml gitops-work/k8s/
+
+                        # Update the backend application and init container.
+                        sed -i -E \
+                          "s|image: drive-backend:[^[:space:]]+|image: drive-backend:$IMAGE_TAG|g" \
+                          gitops-work/k8s/backend-deployment.yaml
+
+                        # Update the frontend container.
+                        sed -i -E \
+                          "s|image: drive-frontend:[^[:space:]]+|image: drive-frontend:$IMAGE_TAG|g" \
+                          gitops-work/k8s/frontend-deployment.yaml
+
+                        # Confirm all three image references were updated.
+                        grep -Fq "image: drive-backend:$IMAGE_TAG" \
+                          gitops-work/k8s/backend-deployment.yaml
+
+                        grep -Fq "image: drive-frontend:$IMAGE_TAG" \
+                          gitops-work/k8s/frontend-deployment.yaml
+
+                        backend_count=$(grep -Fc \
+                          "image: drive-backend:$IMAGE_TAG" \
+                          gitops-work/k8s/backend-deployment.yaml)
+
+                        test "$backend_count" -eq 2
+
+                        cd gitops-work
+
+                        git config user.name "Drive Jenkins"
+                        git config user.email "jenkins@drive.local"
+
+                        git add k8s/
+
+                        if git diff --cached --quiet; then
+                            echo "Deployment configuration is already current."
+                        else
+                            git commit \
+                              -m "Deploy Drive image $IMAGE_TAG"
+
+                            git push origin "HEAD:$GITOPS_BRANCH"
+                        fi
+
+                        git rev-parse HEAD \
+                          > "$WORKSPACE/reports/gitops-commit.txt"
+                    '''
+                }
             }
         }
 
-        stage('Deploy Backend') {
+        stage('Wait for Argo CD Deployment') {
             steps {
-                sh '''
-                    set -eu
+                timeout(time: 10, unit: 'MINUTES') {
+                    sh '''
+                        set -eu
 
-                    kubectl --context "$KUBE_CONTEXT" apply \
-                      -f k8s/backend-service.yaml \
-                      -f k8s/frontend-service.yaml
+                        # Wait for Argo CD to apply this build's images.
+                        while true; do
+                            backend_image=$(kubectl \
+                              --context "$KUBE_CONTEXT" \
+                              get deployment backend \
+                              -n "$KUBE_NAMESPACE" \
+                              -o jsonpath='{.spec.template.spec.containers[0].image}')
 
-                    kubectl --context "$KUBE_CONTEXT" apply \
-                      -f rendered/backend.yaml
+                            backend_init_image=$(kubectl \
+                              --context "$KUBE_CONTEXT" \
+                              get deployment backend \
+                              -n "$KUBE_NAMESPACE" \
+                              -o jsonpath='{.spec.template.spec.initContainers[0].image}')
 
-                    kubectl --context "$KUBE_CONTEXT" rollout status \
-                      deployment/backend -n "$KUBE_NAMESPACE" \
-                      --timeout=180s
-                '''
-            }
-        }
+                            frontend_image=$(kubectl \
+                              --context "$KUBE_CONTEXT" \
+                              get deployment frontend \
+                              -n "$KUBE_NAMESPACE" \
+                              -o jsonpath='{.spec.template.spec.containers[0].image}')
 
-        stage('Deploy Frontend') {
-            steps {
-                sh '''
-                    set -eu
-                    kubectl --context "$KUBE_CONTEXT" apply \
-                      -f rendered/frontend.yaml
+                            if \
+                              [ "$backend_image" = "drive-backend:$IMAGE_TAG" ] && \
+                              [ "$backend_init_image" = "drive-backend:$IMAGE_TAG" ] && \
+                              [ "$frontend_image" = "drive-frontend:$IMAGE_TAG" ]
+                            then
+                                echo "Argo CD applied image tag $IMAGE_TAG."
+                                break
+                            fi
 
-                    kubectl --context "$KUBE_CONTEXT" rollout status \
-                      deployment/frontend -n "$KUBE_NAMESPACE" \
-                      --timeout=180s
-                '''
+                            echo "Waiting for Argo CD to apply $IMAGE_TAG..."
+                            sleep 10
+                        done
+
+                        # Wait for the updated workloads to become ready.
+                        kubectl --context "$KUBE_CONTEXT" \
+                          rollout status deployment/backend \
+                          -n "$KUBE_NAMESPACE" \
+                          --timeout=180s
+
+                        kubectl --context "$KUBE_CONTEXT" \
+                          rollout status deployment/frontend \
+                          -n "$KUBE_NAMESPACE" \
+                          --timeout=180s
+                    '''
+                }
             }
         }
 
@@ -194,18 +270,26 @@ pipeline {
 
                     kubectl --context "$KUBE_CONTEXT" \
                       get pods -n "$KUBE_NAMESPACE"
+
+                    kubectl --context "$KUBE_CONTEXT" \
+                      get application drive -n argocd
                 '''
             }
         }
     }
 
     post {
+        always {
+            archiveArtifacts artifacts: 'reports/*',
+                             allowEmptyArchive: true
+        }
+
         success {
-            echo "Drive deployed successfully. Image tag: ${env.IMAGE_TAG}"
+            echo "Drive verified successfully. Image tag: ${env.IMAGE_TAG}"
         }
 
         failure {
-            echo 'Pipeline failed. Review the failed stage before retrying.'
+            echo 'Pipeline failed. Check the failed stage and Argo CD application status. No automatic rollback was performed.'
         }
     }
 }
