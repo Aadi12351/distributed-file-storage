@@ -1,115 +1,423 @@
-# File Drive
+# Drive — Distributed File Storage with CI/CD, GitOps and Monitoring
 
-A working Drive-style file workspace built from the supplied File Distributor project. React/Vite frontend, FastAPI backend, SQLite by default (PostgreSQL can be configured).
+A file storage application built with FastAPI and React, deployed to Kubernetes using Jenkins and Argo CD, with infrastructure monitoring through Prometheus and Grafana.
 
-## Included
+This project demonstrates an automated workflow from a GitHub commit to application deployment, with monitoring hosted on a separate EC2 instance.
 
-- Account registration, password hashing, JWT login, session expiry and sign-out
-- Private storage per account and ownership checks on destinations and mutations
-- Files and nested folders, breadcrumbs, file and folder uploads, drag-and-drop, upload progress
-- Recursive folder copies, file copies, moves, renaming, multi-selection
-- Search, sorting, list/grid views, persistent favorites, recent files and storage usage
-- Preview/download, file replacement and version restoration
-- Revocable public download links and a view of files with active links
-- Recursive trash, restore and permanent deletion; separately trashed children remain in trash when restoring their parent
-- Settings for light/dark/device theme, compact spacing, start page and default layout
-- Account management: name, email/login ID, password and profile picture (PNG/JPEG/WebP, up to 2 MB)
-- Email/password changes require the current password and invalidate old sessions
-- Advanced search by type, name, content, folder/subfolders, stars, trash and date modified
-- Ascending/descending sorting by name, size, creation date or modification date
-- Help articles, an issue report form and a private history of saved support reports
-- Responsive desktop/mobile interface
+> This is a learning and portfolio environment. The current deployment uses one Kubernetes node and a local SQLite database; it does not provide distributed storage replication or high availability.
 
-## Setup on Windows
+## Application
 
-Requires Python 3.11+ and Node.js 22.12+.
+- React/Vite frontend served by Nginx.
+- FastAPI backend running with Uvicorn.
+- SQLite database and uploaded files stored on a persistent volume.
+- Nginx forwards frontend `/api/` requests to the backend.
 
-From this directory:
+## Architecture
 
-```powershell
-python -m venv .venv
-.\.venv\Scripts\python.exe -m pip install -r requirements.txt
-cd frontend
-npm.cmd ci
-cd ..
+```mermaid
+flowchart TD
+    A["GitHub main branch"] --> B["Jenkins: build and test"]
+    B --> C["Docker images loaded into Kind"]
+    C --> D["Jenkins updates GitOps branch"]
+    D --> E["Argo CD"]
+    E --> F["Kubernetes: frontend and backend"]
+    F --> G["Persistent volume: database and uploads"]
+
+    H["Project EC2 Node Exporter"] --> I["Monitoring EC2 Prometheus"]
+    I --> J["Grafana dashboards and alerts"]
+    J --> K["Email notification"]
 ```
 
-Create `.env` from `.env.example` and replace SECRET_KEY with a random secret. Generate one with:
+## Infrastructure
 
-```powershell
-python -c "import secrets; print(secrets.token_urlsafe(48))"
+| Server | Responsibilities |
+|---|---|
+| Project EC2 | Jenkins controller, Jenkins agent, Docker, Kind, Argo CD, application and Node Exporter |
+| Monitoring EC2 | Prometheus and Grafana using Docker Compose |
+
+Both instances communicate over private IP addresses within the VPC.
+
+The Jenkins controller and build agent currently share the project EC2. The monitoring EC2 is separate.
+
+## Technology Stack
+
+| Area | Tools |
+|---|---|
+| Backend | Python, FastAPI, Uvicorn |
+| Frontend | React, Vite, Nginx |
+| Database | SQLite |
+| Containers | Docker, Docker Compose |
+| Kubernetes | Kind, kubectl |
+| CI | Jenkins |
+| GitOps deployment | Argo CD |
+| Monitoring | Prometheus, Node Exporter, Grafana |
+| Hosting | AWS EC2 |
+| Source control | Git and GitHub |
+
+## Repository Structure
+
+```text
+app/                    FastAPI application
+frontend/               React frontend and frontend Dockerfile
+tests/                  Backend tests
+k8s/                    Application Kubernetes manifests
+kind/                   Kind cluster configuration
+scripts/                Supporting scripts
+platform/monitoring/    Monitoring configuration and documentation
+Dockerfile              Backend container image
+Jenkinsfile             CI/CD pipeline
+compose.yaml            Local application Compose configuration
+README.md               Project documentation
 ```
 
-In terminal 1:
+See [Monitoring documentation](platform/monitoring/README.md) for monitoring setup and restoration.
 
-```powershell
-.\.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8001
+## Branch Strategy
+
+| Branch | Purpose |
+|---|---|
+| `main` | Application source code and Jenkins pipeline |
+| `gitops` | Deployment manifests containing the selected image versions |
+| Feature branches | Changes reviewed before merging into `main` |
+
+Jenkins watches `main` and writes deployment updates to `gitops`. This separates application development from deployment updates.
+
+## Automated Delivery Workflow
+
+1. A developer pushes or merges changes into `main`.
+2. GitHub sends a push webhook to Jenkins.
+3. Jenkins checks out the source code.
+4. Jenkins generates an image tag using the source commit and build number.
+5. Jenkins builds the backend Docker image.
+6. Backend tests run in an isolated test container.
+7. Jenkins builds the frontend Docker image.
+8. Both images are loaded into the Kind cluster.
+9. Jenkins updates image references in the `gitops` branch.
+10. Argo CD detects the manifest changes and applies them to Kubernetes.
+11. Jenkins waits for the expected images and successful rollouts.
+12. HTTP checks verify that the frontend and API respond.
+
+Jenkins prepares the release and updates Git. Argo CD applies the desired application configuration to Kubernetes.
+
+## Jenkins Pipeline
+
+The pipeline includes these stages:
+
+- Checkout
+- Check Tools
+- Build Backend
+- Test Backend
+- Build Frontend
+- Load Images into Kind
+- Update GitOps Branch
+- Wait for Argo CD Deployment
+- Verify Application
+
+Backend testing includes local application and security tests. JUnit results are published in Jenkins.
+
+### Jenkins Requirements
+
+- Agent label: `drive-build`
+- GitHub credential ID: `github-drive`
+- Docker access for the build agent
+- Access to the project Kind cluster
+- GitHub permission to push deployment manifest updates
+
+Do not store GitHub tokens or agent secrets in the repository.
+
+### GitHub Webhook
+
+Configure the repository webhook to send push events to:
+
+```text
+http://<PROJECT_EC2_PUBLIC_IP>:8080/github-webhook/
 ```
 
-In terminal 2:
+Use `application/json` as the content type and enable the GitHub webhook trigger in Jenkins.
 
-```powershell
-cd frontend
-npm.cmd run dev
+Update the webhook if the EC2 public IP changes. The current lab endpoint uses HTTP; HTTPS and webhook signature validation are future improvements.
+
+## Kubernetes Deployment
+
+The application runs in the `drive` namespace.
+
+| Resource | Purpose |
+|---|---|
+| Backend Deployment | Runs the FastAPI application |
+| Frontend Deployment | Runs Nginx and serves the React application |
+| Backend Service | Provides internal access to the API |
+| Frontend Service | Exposes the frontend using NodePort |
+| `drive-data` PVC | Stores the SQLite database and uploaded files |
+| `drive-env` Secret | Supplies backend environment variables |
+
+The frontend is accessible through the project EC2 on port `8081`, mapped to the Kind frontend NodePort.
+
+### Container Images
+
+Images use a tag based on the source commit and Jenkins build number:
+
+```text
+drive-backend:<commit>-<build-number>
+drive-frontend:<commit>-<build-number>
 ```
 
-Open the URL printed by Vite (normally http://localhost:5174). Choose **Create account**. No fixed admin or shared demo password is required.
+They are loaded directly into Kind:
 
-For the already prepared workspace, `Start.ps1` can launch both services in the background. Logs are saved in `logs`; `Stop.ps1` stops only the process IDs saved by this project's launcher. The current development preview may use port 5175 if 5174 is occupied.
-
-The frontend uses `/api`; Vite proxies it to port 8001. Set VITE_API_URL for a different backend. Backend database and uploaded bytes persist on disk in `drive.db` and `uploads/`. Back up both together.
-
-## Verify
-
-```powershell
-.\.venv\Scripts\python.exe -m pytest tests/test_drive_local.py -q --basetemp .test-temp-local
-cd frontend
-npm.cmd run build
-npm.cmd audit
+```bash
+kind load docker-image \
+  "drive-backend:$IMAGE_TAG" \
+  "drive-frontend:$IMAGE_TAG" \
+  --name drive
 ```
 
-The integration suite uses an isolated database and temporary uploads. It tests login validation, account isolation, folder destination permissions, uploads into folders, recursive copy, cycle prevention, search, favorites, sharing, trash recovery, permanent deletion version recovery, profile/settings persistence, avatar validation, password rotation, email changes, session invalidation, support report isolation and advanced search. The older tests supplied in the ZIP require a running server and configured TEST_EMAIL/TEST_PASSWORD; they are not part of the isolated suite.
+The application manifests use `imagePullPolicy: Never`. Images must already exist on the Kind node before deployment.
 
-## Scope and deployment
+A container registry is not part of the current workflow.
 
-This is an independent Drive-style application. Google account sign-in, password-reset email, Google Docs/Sheets live editing, real-time collaboration, email-invited sharing, Google Drive synchronization, distributed object storage, virus scanning and enforced storage quotas are not implemented. The storage meter reports disk usage; it does not enforce a Google storage plan. Recent sorts by file creation time.
+### Storage
 
-Before internet deployment, configure HTTPS, a stable secret, backups, a production database/storage service, appropriate CORS origins and perimeter request/rate limits. Serve the frontend build behind a same-origin `/api` reverse proxy; the Vite proxy is for local development. Public links are bearer links: anyone with the link can download the file until it is revoked or the file is trashed/deleted.
+The backend mounts persistent storage at `/data`.
 
-The deliverable ZIP excludes credentials, existing user databases/uploads, dependency folders and temporary test files. Uploaded files from the original archive remain only in the extracted workspace.
+The database configuration uses:
 
-## Upload fix and new controls
+```text
+sqlite:////data/drive.db
+```
 
-Multipart uploads use XMLHttpRequest, including file replacements and profile pictures. This avoids fetch request streaming incompatibilities in embedded browsers while keeping upload progress. Small text and 8 MB binary uploads were verified in the browser.
+Uploads are stored under the backend’s data directory.
 
-The top-right gear opens Settings; the question mark opens Help & support; your avatar opens Manage your account. The sliders button in the search box opens Advanced search. Content search supports text/CSV/Markdown/JSON and DOCX/XLSX files; it does not search video or image contents. Plain-text content search reads the first 2 MB; Office search bounds file and expanded XML sizes to 10 MB. Owner searches remain scoped to your own account.
+The persistent volume survives application Pod replacement. It is local to the current cluster environment and is not an off-server backup.
 
-Support reports are saved in the server database with a reference number and shown under My reports. No external support system or email delivery is configured.
+Keep the backend at one replica with this SQLite-based design.
 
-## Expanded private previews
+## Secrets
 
-Open any active file to enter the full-screen viewer. Supported browser image formats (including JPG/PNG/GIF/WebP/SVG) offer fit, zoom and rotation. Audio and video (including MP3/WAV/MP4/WebM, subject to browser codec support) stream with HTTP byte ranges and offer play/pause, seek, volume, playback speed and looping. Video includes native fullscreen and picture-in-picture where available. PDFs use PDF.js, loaded on demand, with page navigation and zoom. DOCX/XLSX use a safe reading view of text/tables; PPTX shows slide text. Office previews do not reproduce complete original layouts, images, charts or animations.
+Backend configuration is supplied through the `drive-env` Kubernetes Secret.
 
-Text/code/JSON/XML/HTML/CSV/Markdown show escaped source, line numbers, matching-line highlighting and wrapping. ZIP archives list up to 5,000 entries and preview supported images/media/PDF/text entries without extracting anything to disk; entries can be downloaded individually. Office documents inside ZIPs can be inspected as bytes or downloaded; nested archives are not recursively opened. Encrypted or exceptionally large/compressed entries have clear download guidance.
+Required settings include:
 
-Every file has metadata, original download and a binary inspector (first 4 KB), including formats without a visual renderer. This provides a useful fallback; it cannot render every proprietary, encrypted, damaged format or unsupported media codec. Text previews read at most 2 MB and show at most 10,000 lines. Office documents are limited to 20 MB stored / 50 MB expanded; spreadsheets show at most 30 sheets, 1,000 rows and 100 columns per sheet. ZIP entry previews are capped at 20 MB with expansion-ratio checks.
+```dotenv
+SECRET_KEY=<strong-random-secret>
+ALGORITHM=HS256
+ACCESS_TOKEN_EXPIRE_MINUTES=60
+DATABASE_URL=sqlite:////data/drive.db
+```
 
-Preview URLs are scoped to one file, expire after two hours, validate account session version, and stop working when the file is trashed. They cannot authenticate as login tokens. Uploaded HTML/scripts are displayed as source, never executed. Native streaming and document responses use private no-store caching. The isolated tests also check byte-range seeking, preview ownership, token scoping, trash revocation, source safety and ZIP safeguards.
+Use the complete environment settings required by the application.
 
-## Account security and preview polish
+For an initial setup, create the Secret from a private environment file:
 
-The preview uses a translucent dark backdrop with blur and image shadows. Icon controls show a label on hover and keyboard focus; all have accessible names. The account Security tab includes optional authenticator-based TOTP verification (RFC 6238), a locally generated QR code, eight one-time recovery codes (with verified regeneration), signed-in session management, sign-out of other sessions and a private security activity list. The password form is collapsed below the protection controls. MFA enrollment requires the current password and a valid authenticator code; turning it off and signing out all other sessions require the password plus a second factor when enabled. Email/password changes also require the second factor when enabled. The actual user's MFA setting is not changed automatically.
+```bash
+kubectl create namespace drive \
+  --dry-run=client -o yaml | kubectl apply -f -
 
-Authenticator secrets are encrypted in the database using a Fernet key derived from SECRET_KEY; recovery codes are stored only as SHA-256 hashes of random 128-bit codes. This protects database-only theft of the authenticator secret, not compromise of the server and its key. Keep SECRET_KEY and database backups secure and retain the key when restoring backups; there is no automated MFA key rotation or email-based account recovery. Losing the authenticator and every recovery code can lock out the account. Authenticator codes cannot be reused after enrollment or successful authentication; wait for the next 30-second code if needed.
+kubectl create secret generic drive-env \
+  --namespace drive \
+  --from-env-file=.env \
+  --dry-run=client -o yaml | kubectl apply -f -
+```
 
-New access tokens expire after at most 60 minutes and are tied to revocable database sessions. Logout invalidates the current tracked session; revoking any tracked session also revokes its native preview links. Password/email changes, MFA configuration changes and sign-out of other sessions invalidate older tokens via the existing account version. Sessions issued before this upgrade can be registered with Track this session; use Sign out other sessions to invalidate all older tokens. Password hashes use PBKDF2-SHA256 at 600,000 iterations; old hashes remain readable for existing accounts. Bearer tokens still use browser local storage; production session design should evaluate HttpOnly cookies with CSRF protection.
+Never commit real `.env` files, Kubernetes credentials, private keys, tokens or passwords.
 
-Database-backed throttling allows at most five attempts per login email and thirty attempts per source IP per 15-minute window; a successful login clears the email bucket. Registration and security confirmations have their own account buckets. Configure a shared production database and enforce additional limits at a trusted reverse proxy; do not trust arbitrary forwarded IP headers. Events include sign-in success/failure, second-factor failures, MFA changes, session revocation, password/profile changes and creation of public sharing links. Events are private to the account and not a complete file-access audit trail.
+## Argo CD
 
-MAX_UPLOAD_MB defaults to 1024. Both declared and streamed request bodies are bounded (multipart permits 1 MB of envelope overhead), and individual new/replacement files are checked before copying. Avatars are capped at 2 MB with a 3 MB request envelope; other request bodies are capped at 64 KB. Private API responses disable caching, prevent MIME sniffing, suppress referrers and restrict framing/active content; HSTS is set for HTTPS requests. Configure HTTPS and trusted proxy behavior for deployment. The sharing dialog offers one-day, seven-day, thirty-day or explicitly non-expiring links. Its initial selection is seven days; existing links are not changed.
+The `drive` Argo CD application tracks:
 
-**Deployment limits:** files remain unencrypted on server disk; this is not end-to-end encrypted storage. HTTPS is not configured in the local preview. Malware scanning, encrypted storage/managed keys, backup/restore drills, operational monitoring and an independent security review are still needed before handling real confidential production data. No security certification or guarantee is claimed.
+| Setting | Value |
+|---|---|
+| Repository | This GitHub repository |
+| Target revision | `gitops` |
+| Manifest path | `k8s` |
+| Destination | Project Kubernetes cluster |
+| Namespace | `drive` |
+| Automatic sync | Enabled |
+| Self-heal | Enabled |
+| Automatic pruning | Disabled |
 
-Security implementation references: [OWASP Authentication](https://cheatsheetseries.owasp.org/cheatsheets/Authentication_Cheat_Sheet.html), [OWASP MFA](https://cheatsheetseries.owasp.org/cheatsheets/Multifactor_Authentication_Cheat_Sheet.html), [OWASP File Upload](https://cheatsheetseries.owasp.org/cheatsheets/File_Upload_Cheat_Sheet.html), and [RFC 6238](https://www.rfc-editor.org/rfc/rfc6238.html).
+### Reading Application Status
 
-Run the security suite alongside the existing isolated suite: `python -m pytest tests/test_drive_local.py tests/test_security_local.py -q --basetemp .test-temp-security`.
+- **Synced:** Live resources match the desired Git configuration.
+- **OutOfSync:** Git and live resources differ.
+- **Healthy:** Resources satisfy Argo CD’s health checks.
+- **Progressing:** A rollout or another operation is still in progress.
+- **Degraded:** A resource has a health problem requiring investigation.
+
+Sync status and health describe different things. An application can be healthy while its configuration differs from Git.
+
+### Deployment History
+
+Kubernetes may retain older ReplicaSets after a rollout. Their presence does not mean multiple application versions are actively serving traffic.
+
+Check active replicas and Pods when investigating.
+
+### Rollback Approach
+
+Restore a known-good image reference in the `gitops` branch and let Argo CD reconcile it.
+
+The referenced image must still be available on the Kind node.
+
+## Monitoring
+
+Monitoring runs on a separate EC2 instance because running the full monitoring stack alongside Jenkins and Kubernetes caused memory pressure on the project server.
+
+The current setup uses:
+
+- Node Exporter on the project EC2.
+- Prometheus on the monitoring EC2.
+- Grafana on the monitoring EC2.
+- Gmail SMTP for email notification delivery.
+
+### Metrics Flow
+
+Prometheus scrapes Node Exporter over the private network every 60 seconds. Grafana queries the collected metrics.
+
+### Dashboard
+
+The exported dashboard contains:
+
+- Host RAM usage percentage.
+- Host CPU usage percentage.
+- Automatic refresh every minute.
+
+### High RAM Alert
+
+| Setting | Value |
+|---|---|
+| Name | Drive Server High RAM |
+| Threshold | Above 85% RAM usage |
+| Evaluation interval | 1 minute |
+| Pending period | 5 minutes |
+| Contact point | Aaditya |
+
+Email contact point delivery was tested successfully.
+
+The exported rule references the contact point by name. A restored installation must configure that contact point and SMTP credentials separately.
+
+### Monitoring Scope
+
+Current monitoring covers host CPU and RAM.
+
+Kubernetes Pod readiness, container restart alerts, website availability and application request metrics are future additions.
+
+See [platform/monitoring/README.md](platform/monitoring/README.md) for installation, dashboard restoration and alert configuration.
+
+## Verification Commands
+
+Run application and Kubernetes checks on the **project EC2**:
+
+```bash
+sudo systemctl is-active docker jenkins drive-agent
+
+kubectl get nodes
+kubectl get pods -n drive
+kubectl get deployments -n drive
+kubectl get applications -n argocd
+
+curl -fsS --max-time 10 http://127.0.0.1:8081/api/
+```
+
+Expected API response:
+
+```json
+{"message":"Distributed File Storage API"}
+```
+
+Run monitoring checks on the **monitoring EC2**, from the monitoring Compose directory:
+
+```bash
+sudo docker compose ps
+
+curl -fsS --max-time 10 http://127.0.0.1:9090/-/ready
+curl -fsS --max-time 10 http://127.0.0.1:3000/api/health
+```
+
+## Troubleshooting
+
+### Pod Failure or Restart
+
+```bash
+kubectl get pods -n drive
+kubectl describe pod <POD_NAME> -n drive
+kubectl logs <POD_NAME> -n drive --all-containers --tail=100
+kubectl get events -n drive --sort-by=.metadata.creationTimestamp
+```
+
+For a previously terminated backend container:
+
+```bash
+kubectl logs <BACKEND_POD_NAME> -n drive \
+  -c backend --previous --tail=100
+```
+
+A container restart normally keeps the same Pod name. Pod replacement creates a new Pod name.
+
+### Website Works Locally but Not in the Browser
+
+Check:
+
+- The EC2 instance’s current public IP.
+- The security group rule for TCP `8081`.
+- Whether the permitted administrator IP is current.
+- The frontend Service and Pod readiness.
+
+### Argo CD Shows OutOfSync
+
+Review the application diff and confirm:
+
+- The application tracks the intended branch and path.
+- Jenkins pushed the expected image references.
+- Both images were loaded into Kind.
+- The sync operation completed successfully.
+
+### Grafana Email Failure
+
+Confirm SMTP settings are configured in the running Grafana container.
+
+After changing Compose environment variables, recreate Grafana:
+
+```bash
+sudo docker compose up -d --no-deps --force-recreate grafana
+```
+
+Use a Google app password rather than the normal Google account password.
+
+## Challenges and Lessons
+
+- Resolved Docker socket permission and Compose installation issues.
+- Separated Jenkins build responsibilities from Argo CD deployment responsibilities.
+- Aligned Git manifests with deployed image versions.
+- Used a dedicated GitOps branch for deployment updates.
+- Investigated memory pressure and moved monitoring to another EC2.
+- Configured private network access to Node Exporter.
+- Configured Grafana SMTP and verified test email delivery.
+- Exported dashboards and alerts for version control.
+
+## Current Limitations
+
+- Single-node Kind cluster and single application EC2.
+- No automatic recovery from complete EC2 failure.
+- Local container images without a registry.
+- SQLite backend designed for one replica.
+- Local persistent storage without an external backup.
+- Monitoring focuses on host CPU and RAM.
+- Dashboard and alert exports require restoration steps.
+- HTTPS and production-grade credential management are not yet implemented.
+
+## Future Improvements
+
+- Pod readiness and restart monitoring.
+- Website availability checks.
+- Application metrics and centralized logs.
+- Private image registry.
+- Automated database and upload backups with restore testing.
+- HTTPS and stable DNS.
+- Restricted deployment credentials.
+- Automated monitoring provisioning and deployment.
+- Multi-node deployment with an appropriate shared database and storage design.
+
+## Project Outcome
+
+The project demonstrates application containerization, automated testing, Jenkins CI, Kubernetes deployment through Argo CD, persistent application storage, and host monitoring with email notifications.
+
+It is an end-to-end DevOps portfolio project with documented operational limits and a clear path for further improvements.
