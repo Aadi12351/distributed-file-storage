@@ -1,168 +1,214 @@
-# Drive — Distributed File Storage with CI/CD, GitOps and Monitoring
+# Drive — CI/CD, GitOps & Monitoring on AWS
 
-A file storage application built with FastAPI and React, deployed to Kubernetes using Jenkins and Argo CD, with infrastructure monitoring through Prometheus and Grafana.
+A FastAPI and React file storage application deployed to Kubernetes through an automated Jenkins and Argo CD workflow, with Prometheus and Grafana monitoring on a separate EC2 instance.
 
-This project demonstrates an automated workflow from a GitHub commit to application deployment, with monitoring hosted on a separate EC2 instance.
+**GitHub → Jenkins → Docker → Kind → Argo CD → Application**
 
-> This is a learning and portfolio environment. The current deployment uses one Kubernetes node and a local SQLite database; it does not provide distributed storage replication or high availability.
+This project demonstrates how a source code change becomes a tested deployment and how server metrics are collected, visualized, and used for email alerts.
 
-## Application
+> **Deployment scope:** This is a portfolio and learning environment. The current application uses SQLite and local persistent storage on a single Kind node. Distributed storage replication and high availability are future improvements.
 
-- React/Vite frontend served by Nginx.
-- FastAPI backend running with Uvicorn.
-- SQLite database and uploaded files stored on a persistent volume.
-- Nginx forwards frontend `/api/` requests to the backend.
+## Contents
+
+- [Project Preview](#project-preview)
+- [Architecture](#architecture)
+- [Technology Stack](#technology-stack)
+- [CI/CD Workflow](#cicd-workflow)
+- [Kubernetes and Storage](#kubernetes-and-storage)
+- [Argo CD and GitOps](#argo-cd-and-gitops)
+- [Monitoring and Alerts](#monitoring-and-alerts)
+- [Repository Structure](#repository-structure)
+- [Environment Setup](#environment-setup)
+- [Verification and Troubleshooting](#verification-and-troubleshooting)
+- [Challenges and Solutions](#challenges-and-solutions)
+- [Limitations and Next Steps](#limitations-and-next-steps)
+
+## Project Preview
+
+### Application Home
+
+The React frontend provides a file management interface. Nginx serves the frontend and forwards API requests to the FastAPI backend.
+
+![Drive application home](docs/App_Home_Page.png)
+
+<details>
+<summary><strong>View the login page</strong></summary>
+
+![Drive login page](docs/App_Login_Page.png)
+
+</details>
+
+### Jenkins Pipeline
+
+The pipeline builds container images, runs backend tests, updates the GitOps branch, waits for Argo CD deployment, and verifies the application.
+
+![Jenkins pipeline](docs/Jenkins_pipeline.png)
+
+### Grafana Email Notification
+
+A successful contact point test verified email delivery through Gmail SMTP.
+
+This screenshot demonstrates notification delivery. It is separate from testing the high RAM rule against collected metrics.
+
+![Grafana email notification test](docs/Grafana_Alert.png)
 
 ## Architecture
 
 ```mermaid
 flowchart TD
-    A["GitHub main branch"] --> B["Jenkins: build and test"]
-    B --> C["Docker images loaded into Kind"]
-    C --> D["Jenkins updates GitOps branch"]
-    D --> E["Argo CD"]
-    E --> F["Kubernetes: frontend and backend"]
-    F --> G["Persistent volume: database and uploads"]
+    Git["GitHub: main"] --> Jenkins["Jenkins build agent"]
+    Jenkins --> Tests["Build images and run tests"]
+    Tests --> Images["Load images into Kind"]
+    Images --> GitOps["Update GitHub: gitops"]
+    GitOps --> Argo["Argo CD"]
+    Argo --> App["Kubernetes frontend and backend"]
+    App --> Storage["Persistent volume"]
 
-    H["Project EC2 Node Exporter"] --> I["Monitoring EC2 Prometheus"]
-    I --> J["Grafana dashboards and alerts"]
-    J --> K["Email notification"]
+    Exporter["Project EC2: Node Exporter"] --> Prometheus["Monitoring EC2: Prometheus"]
+    Prometheus --> Grafana["Grafana dashboards and rules"]
+    Grafana --> Email["Email notifications"]
 ```
 
-## Infrastructure
+### Server Responsibilities
 
-| Server | Responsibilities |
+| Server | Components |
 |---|---|
-| Project EC2 | Jenkins controller, Jenkins agent, Docker, Kind, Argo CD, application and Node Exporter |
-| Monitoring EC2 | Prometheus and Grafana using Docker Compose |
+| **Project EC2** | Jenkins controller, Jenkins build agent, Docker, Kind, Argo CD, Drive application, Node Exporter |
+| **Monitoring EC2** | Prometheus and Grafana through Docker Compose |
 
-Both instances communicate over private IP addresses within the VPC.
+The two instances communicate over private IP addresses within the VPC.
 
-The Jenkins controller and build agent currently share the project EC2. The monitoring EC2 is separate.
+The Jenkins controller and build agent share the project EC2. Monitoring runs on a separate instance to reduce memory pressure on the application server.
+
+### Application Request Flow
+
+1. The browser sends a request to the frontend on the project EC2.
+2. Nginx serves the React application.
+3. Requests under `/api/` are forwarded to the backend Service.
+4. FastAPI handles the request and accesses the database or uploaded files.
 
 ## Technology Stack
 
-| Area | Tools |
+| Layer | Technology | Purpose |
+|---|---|---|
+| Frontend | React, Vite | Application interface |
+| Web server | Nginx | Serves frontend files and proxies API requests |
+| Backend | Python, FastAPI, Uvicorn | Application API |
+| Database | SQLite | Application data |
+| Containers | Docker | Packages backend and frontend |
+| Local deployment | Docker Compose | Application and standalone monitoring configurations |
+| Kubernetes | Kind | Runs the application cluster |
+| CI | Jenkins | Builds, tests, and prepares releases |
+| GitOps | Argo CD | Reconciles Kubernetes resources with Git |
+| Metrics | Node Exporter, Prometheus | Exposes and collects server metrics |
+| Visualization | Grafana | Dashboards and alert evaluation |
+| Notifications | Gmail SMTP | Email delivery |
+| Hosting | AWS EC2 | Application and monitoring servers |
+
+## CI/CD Workflow
+
+### From Commit to Deployment
+
+1. A change is pushed or merged into `main`.
+2. A GitHub push webhook triggers Jenkins.
+3. Jenkins checks out the source and generates an image tag.
+4. Jenkins builds the backend image.
+5. Backend application and security tests run in an isolated container.
+6. Jenkins builds the frontend image.
+7. Both images are loaded into Kind.
+8. Jenkins updates deployment image references in the `gitops` branch.
+9. Argo CD detects the desired configuration change.
+10. Argo CD applies the manifests to Kubernetes.
+11. Jenkins waits for the expected image versions and successful rollouts.
+12. HTTP checks verify the frontend and API.
+
+### Pipeline Stages
+
+| Stage | Responsibility |
 |---|---|
-| Backend | Python, FastAPI, Uvicorn |
-| Frontend | React, Vite, Nginx |
-| Database | SQLite |
-| Containers | Docker, Docker Compose |
-| Kubernetes | Kind, kubectl |
-| CI | Jenkins |
-| GitOps deployment | Argo CD |
-| Monitoring | Prometheus, Node Exporter, Grafana |
-| Hosting | AWS EC2 |
-| Source control | Git and GitHub |
+| Checkout | Retrieves application source |
+| Check Tools | Verifies required tools and cluster access |
+| Build Backend | Builds the FastAPI image |
+| Test Backend | Runs backend tests and publishes JUnit results |
+| Build Frontend | Builds the React/Nginx image |
+| Load Images into Kind | Makes images available on the cluster node |
+| Update GitOps Branch | Commits the selected deployment image versions |
+| Wait for Argo CD Deployment | Waits for reconciliation and rollout |
+| Verify Application | Checks frontend and API responses |
 
-## Repository Structure
+### Image Versioning
 
-```text
-app/                    FastAPI application
-frontend/               React frontend and frontend Dockerfile
-tests/                  Backend tests
-k8s/                    Application Kubernetes manifests
-kind/                   Kind cluster configuration
-scripts/                Supporting scripts
-platform/monitoring/    Monitoring configuration and documentation
-Dockerfile              Backend container image
-Jenkinsfile             CI/CD pipeline
-compose.yaml            Local application Compose configuration
-README.md               Project documentation
-```
-
-See [Monitoring documentation](platform/monitoring/README.md) for monitoring setup and restoration.
-
-## Branch Strategy
-
-| Branch | Purpose |
-|---|---|
-| `main` | Application source code and Jenkins pipeline |
-| `gitops` | Deployment manifests containing the selected image versions |
-| Feature branches | Changes reviewed before merging into `main` |
-
-Jenkins watches `main` and writes deployment updates to `gitops`. This separates application development from deployment updates.
-
-## Automated Delivery Workflow
-
-1. A developer pushes or merges changes into `main`.
-2. GitHub sends a push webhook to Jenkins.
-3. Jenkins checks out the source code.
-4. Jenkins generates an image tag using the source commit and build number.
-5. Jenkins builds the backend Docker image.
-6. Backend tests run in an isolated test container.
-7. Jenkins builds the frontend Docker image.
-8. Both images are loaded into the Kind cluster.
-9. Jenkins updates image references in the `gitops` branch.
-10. Argo CD detects the manifest changes and applies them to Kubernetes.
-11. Jenkins waits for the expected images and successful rollouts.
-12. HTTP checks verify that the frontend and API respond.
-
-Jenkins prepares the release and updates Git. Argo CD applies the desired application configuration to Kubernetes.
-
-## Jenkins Pipeline
-
-The pipeline includes these stages:
-
-- Checkout
-- Check Tools
-- Build Backend
-- Test Backend
-- Build Frontend
-- Load Images into Kind
-- Update GitOps Branch
-- Wait for Argo CD Deployment
-- Verify Application
-
-Backend testing includes local application and security tests. JUnit results are published in Jenkins.
-
-### Jenkins Requirements
-
-- Agent label: `drive-build`
-- GitHub credential ID: `github-drive`
-- Docker access for the build agent
-- Access to the project Kind cluster
-- GitHub permission to push deployment manifest updates
-
-Do not store GitHub tokens or agent secrets in the repository.
-
-### GitHub Webhook
-
-Configure the repository webhook to send push events to:
-
-```text
-http://<PROJECT_EC2_PUBLIC_IP>:8080/github-webhook/
-```
-
-Use `application/json` as the content type and enable the GitHub webhook trigger in Jenkins.
-
-Update the webhook if the EC2 public IP changes. The current lab endpoint uses HTTP; HTTPS and webhook signature validation are future improvements.
-
-## Kubernetes Deployment
-
-The application runs in the `drive` namespace.
-
-| Resource | Purpose |
-|---|---|
-| Backend Deployment | Runs the FastAPI application |
-| Frontend Deployment | Runs Nginx and serves the React application |
-| Backend Service | Provides internal access to the API |
-| Frontend Service | Exposes the frontend using NodePort |
-| `drive-data` PVC | Stores the SQLite database and uploaded files |
-| `drive-env` Secret | Supplies backend environment variables |
-
-The frontend is accessible through the project EC2 on port `8081`, mapped to the Kind frontend NodePort.
-
-### Container Images
-
-Images use a tag based on the source commit and Jenkins build number:
+Images use the source commit and Jenkins build number:
 
 ```text
 drive-backend:<commit>-<build-number>
 drive-frontend:<commit>-<build-number>
 ```
 
-They are loaded directly into Kind:
+This associates a deployment with the source revision and pipeline run that produced it.
+
+### Branch Responsibilities
+
+| Branch | Purpose |
+|---|---|
+| `main` | Application source and Jenkins pipeline |
+| `gitops` | Kubernetes manifests with deployment image versions |
+| Feature branches | Proposed changes before merging into `main` |
+
+Jenkins watches `main` and writes deployment updates to `gitops`.
+
+### Jenkins Configuration
+
+The current pipeline expects:
+
+```text
+Agent label:          drive-build
+GitHub credential:    github-drive
+Kubernetes context:   kind-drive
+Kubernetes namespace: drive
+Kind cluster:         drive
+```
+
+The build agent requires Docker access, cluster access, and permission to push the GitOps branch.
+
+### GitHub Webhook
+
+The current lab webhook endpoint is:
+
+```text
+http://<PROJECT_EC2_PUBLIC_IP>:8080/github-webhook/
+```
+
+Configure push events with the `application/json` content type and enable the GitHub webhook trigger in Jenkins.
+
+If the EC2 public IP changes, update the webhook URL. HTTPS and webhook signature validation remain future improvements.
+
+## Kubernetes and Storage
+
+The application runs in the `drive` namespace.
+
+| Resource | Responsibility |
+|---|---|
+| Backend Deployment | Runs FastAPI |
+| Frontend Deployment | Runs Nginx and the React frontend |
+| Backend Service | Provides internal API access |
+| Frontend Service | Exposes the frontend through NodePort |
+| `drive-data` PVC | Persists database and upload data |
+| `drive-env` Secret | Supplies backend environment settings |
+
+### Application Access
+
+The project EC2 maps port `8081` to the frontend NodePort inside Kind.
+
+```text
+http://<PROJECT_EC2_PUBLIC_IP>:8081
+```
+
+Permit this port only from the intended client addresses in the EC2 security group.
+
+### Local Images
+
+The current workflow loads images directly into Kind:
 
 ```bash
 kind load docker-image \
@@ -171,31 +217,33 @@ kind load docker-image \
   --name drive
 ```
 
-The application manifests use `imagePullPolicy: Never`. Images must already exist on the Kind node before deployment.
+Application manifests use:
 
-A container registry is not part of the current workflow.
+```yaml
+imagePullPolicy: Never
+```
 
-### Storage
+The selected images must exist on the Kind node before deployment. A container registry is not currently used.
 
-The backend mounts persistent storage at `/data`.
+### Persistent Data
 
-The database configuration uses:
+The backend mounts its data volume at `/data`.
+
+The database uses:
 
 ```text
 sqlite:////data/drive.db
 ```
 
-Uploads are stored under the backend’s data directory.
+The persistent volume preserves data across application Pod replacement. It is local to the cluster environment and does not provide an external backup or storage replication.
 
-The persistent volume survives application Pod replacement. It is local to the current cluster environment and is not an off-server backup.
+The current SQLite design uses one backend replica.
 
-Keep the backend at one replica with this SQLite-based design.
-
-## Secrets
+### Backend Secrets
 
 Backend configuration is supplied through the `drive-env` Kubernetes Secret.
 
-Required settings include:
+Example settings:
 
 ```dotenv
 SECRET_KEY=<strong-random-secret>
@@ -204,115 +252,213 @@ ACCESS_TOKEN_EXPIRE_MINUTES=60
 DATABASE_URL=sqlite:////data/drive.db
 ```
 
-Use the complete environment settings required by the application.
+Additional settings must match the application configuration.
 
-For an initial setup, create the Secret from a private environment file:
+Never commit the real environment file, kubeconfig, tokens, private keys, or passwords.
 
-```bash
-kubectl create namespace drive \
-  --dry-run=client -o yaml | kubectl apply -f -
+## Argo CD and GitOps
 
-kubectl create secret generic drive-env \
-  --namespace drive \
-  --from-env-file=.env \
-  --dry-run=client -o yaml | kubectl apply -f -
-```
-
-Never commit real `.env` files, Kubernetes credentials, private keys, tokens or passwords.
-
-## Argo CD
-
-The `drive` Argo CD application tracks:
+Argo CD manages the desired application state from Git.
 
 | Setting | Value |
 |---|---|
-| Repository | This GitHub repository |
-| Target revision | `gitops` |
+| Application | `drive` |
+| Source branch | `gitops` |
 | Manifest path | `k8s` |
-| Destination | Project Kubernetes cluster |
-| Namespace | `drive` |
+| Destination namespace | `drive` |
 | Automatic sync | Enabled |
 | Self-heal | Enabled |
 | Automatic pruning | Disabled |
 
-### Reading Application Status
+Jenkins prepares the release and commits deployment configuration. Argo CD applies that configuration to Kubernetes.
 
-- **Synced:** Live resources match the desired Git configuration.
-- **OutOfSync:** Git and live resources differ.
-- **Healthy:** Resources satisfy Argo CD’s health checks.
-- **Progressing:** A rollout or another operation is still in progress.
-- **Degraded:** A resource has a health problem requiring investigation.
+### Understanding Status
 
-Sync status and health describe different things. An application can be healthy while its configuration differs from Git.
+| Status | Meaning |
+|---|---|
+| Synced | Live resources match the desired Git configuration |
+| OutOfSync | Git and live configuration differ |
+| Healthy | Resources satisfy the configured health checks |
+| Progressing | A rollout or operation is in progress |
+| Degraded | A resource has a health problem |
+
+Health and synchronization describe different conditions. A running application can still be OutOfSync.
 
 ### Deployment History
 
-Kubernetes may retain older ReplicaSets after a rollout. Their presence does not mean multiple application versions are actively serving traffic.
+Older ReplicaSets may remain after a rollout. Their presence does not mean every historical application version is running.
 
-Check active replicas and Pods when investigating.
+Check Pod counts and active replicas to understand what is serving traffic.
 
-### Rollback Approach
+### Rollback
 
-Restore a known-good image reference in the `gitops` branch and let Argo CD reconcile it.
+Restore a known-good image reference in the `gitops` branch and let Argo CD reconcile the change.
 
 The referenced image must still be available on the Kind node.
 
-## Monitoring
+## Monitoring and Alerts
 
-Monitoring runs on a separate EC2 instance because running the full monitoring stack alongside Jenkins and Kubernetes caused memory pressure on the project server.
+Monitoring runs independently of the application deployment.
 
-The current setup uses:
+### Metrics Collection
 
-- Node Exporter on the project EC2.
-- Prometheus on the monitoring EC2.
-- Grafana on the monitoring EC2.
-- Gmail SMTP for email notification delivery.
-
-### Metrics Flow
-
-Prometheus scrapes Node Exporter over the private network every 60 seconds. Grafana queries the collected metrics.
+1. Node Exporter exposes project EC2 metrics on port `9100`.
+2. Prometheus scrapes the private endpoint every 60 seconds.
+3. Grafana queries Prometheus for dashboards and alert evaluation.
 
 ### Dashboard
 
-The exported dashboard contains:
+The dashboard contains:
 
 - Host RAM usage percentage.
 - Host CPU usage percentage.
-- Automatic refresh every minute.
+- A one-minute automatic refresh interval.
+
+The dashboard JSON is stored in:
+
+```text
+platform/monitoring/grafana/drive-server-monitoring.json
+```
 
 ### High RAM Alert
 
 | Setting | Value |
 |---|---|
 | Name | Drive Server High RAM |
-| Threshold | Above 85% RAM usage |
+| Condition | RAM usage above 85% |
 | Evaluation interval | 1 minute |
 | Pending period | 5 minutes |
 | Contact point | Aaditya |
 
-Email contact point delivery was tested successfully.
+The corrected alert export is stored in:
 
-The exported rule references the contact point by name. A restored installation must configure that contact point and SMTP credentials separately.
+```text
+platform/monitoring/grafana/alert-rules.yaml
+```
 
-### Monitoring Scope
+The alert condition threshold is configured under **IS ABOVE**. The query’s **Min step** field is not the alert threshold.
 
-Current monitoring covers host CPU and RAM.
+### Email Delivery
 
-Kubernetes Pod readiness, container restart alerts, website availability and application request metrics are future additions.
+Grafana uses Gmail SMTP with a Google app password.
 
-See [platform/monitoring/README.md](platform/monitoring/README.md) for installation, dashboard restoration and alert configuration.
+Credentials remain in a private `.env` file on the monitoring server. The repository includes `.env.example` with placeholders.
 
-## Verification Commands
+The email contact point test was successfully delivered. A contact point test verifies delivery independently of the RAM rule.
 
-Run application and Kubernetes checks on the **project EC2**:
+### Restoration
+
+The repository includes monitoring configuration, a dashboard export, and an alert rule export.
+
+The exports are not automatically loaded by the current Compose configuration. Follow the restoration instructions in the monitoring README.
+
+The alert references the **Aaditya** contact point, which must also be configured during restoration.
+
+See [Monitoring setup and restoration](platform/monitoring/README.md).
+
+## Repository Structure
+
+```text
+app/
+frontend/
+tests/
+k8s/
+kind/
+scripts/
+platform/
+  monitoring/
+    compose.yaml
+    prometheus.yml
+    .env.example
+    README.md
+    grafana/
+      drive-server-monitoring.json
+      alert-rules.yaml
+      provisioning/
+        datasources/
+          prometheus.yaml
+docs/
+  App_Login_Page.png
+  App_Home_Page.png
+  Jenkins_pipeline.png
+  Grafana_Alert.png
+Dockerfile
+Jenkinsfile
+compose.yaml
+README.md
+```
+
+## Environment Setup
+
+### Project Server Requirements
+
+- Docker Engine.
+- Kind and kubectl.
+- Jenkins controller and configured build agent.
+- Argo CD.
+- Access to this GitHub repository.
+- Backend Kubernetes Secret.
+- Node Exporter.
+
+The Kubernetes context must point to the intended cluster before running deployment commands.
+
+### Initial Application Configuration
+
+Create the namespace:
+
+```bash
+kubectl create namespace drive \
+  --dry-run=client -o yaml | kubectl apply -f -
+```
+
+Create the backend Secret from a private, application-specific `.env` file:
+
+```bash
+kubectl create secret generic drive-env \
+  --namespace drive \
+  --from-env-file=.env \
+  --dry-run=client -o yaml | kubectl apply -f -
+```
+
+Build and load the selected images before Argo CD deploys manifests that reference them.
+
+Configure the Argo CD application to track the `gitops` branch and `k8s` directory.
+
+### Monitoring Server Requirements
+
+- Docker Engine and Docker Compose.
+- Private connectivity to project EC2 port `9100`.
+- Administrator access to Grafana port `3000`.
+- Outbound SMTP connectivity.
+- Private Grafana and SMTP environment settings.
+
+Detailed instructions are available in:
+
+[platform/monitoring/README.md](platform/monitoring/README.md)
+
+### Reproduction Scope
+
+This README describes the implemented architecture and operating workflow. Provisioning a new environment also requires configuring EC2 networking, installing the tools, creating Jenkins credentials and its agent, and registering the Argo CD application.
+
+## Verification and Troubleshooting
+
+### Project Server Checks
+
+Run on the project EC2:
 
 ```bash
 sudo systemctl is-active docker jenkins drive-agent
 
 kubectl get nodes
-kubectl get pods -n drive
 kubectl get deployments -n drive
+kubectl get pods -n drive
 kubectl get applications -n argocd
+```
+
+Check the application:
+
+```bash
+curl -I --max-time 10 http://127.0.0.1:8081/
 
 curl -fsS --max-time 10 http://127.0.0.1:8081/api/
 ```
@@ -323,24 +469,16 @@ Expected API response:
 {"message":"Distributed File Storage API"}
 ```
 
-Run monitoring checks on the **monitoring EC2**, from the monitoring Compose directory:
+### Pod Investigation
 
 ```bash
-sudo docker compose ps
-
-curl -fsS --max-time 10 http://127.0.0.1:9090/-/ready
-curl -fsS --max-time 10 http://127.0.0.1:3000/api/health
-```
-
-## Troubleshooting
-
-### Pod Failure or Restart
-
-```bash
-kubectl get pods -n drive
 kubectl describe pod <POD_NAME> -n drive
-kubectl logs <POD_NAME> -n drive --all-containers --tail=100
-kubectl get events -n drive --sort-by=.metadata.creationTimestamp
+
+kubectl logs <POD_NAME> -n drive \
+  --all-containers --tail=100
+
+kubectl get events -n drive \
+  --sort-by=.metadata.creationTimestamp
 ```
 
 For a previously terminated backend container:
@@ -352,72 +490,124 @@ kubectl logs <BACKEND_POD_NAME> -n drive \
 
 A container restart normally keeps the same Pod name. Pod replacement creates a new Pod name.
 
-### Website Works Locally but Not in the Browser
+### Monitoring Checks
 
-Check:
+Run from the active monitoring Compose directory on the monitoring EC2:
 
-- The EC2 instance’s current public IP.
-- The security group rule for TCP `8081`.
-- Whether the permitted administrator IP is current.
-- The frontend Service and Pod readiness.
+```bash
+sudo docker compose ps
 
-### Argo CD Shows OutOfSync
+curl -fsS --max-time 10 http://127.0.0.1:9090/-/ready
 
-Review the application diff and confirm:
+curl -fsS --max-time 10 http://127.0.0.1:3000/api/health
+```
 
-- The application tracks the intended branch and path.
-- Jenkins pushed the expected image references.
-- Both images were loaded into Kind.
-- The sync operation completed successfully.
+In Grafana Explore:
 
-### Grafana Email Failure
+```promql
+up{job="drive-server"}
+```
 
-Confirm SMTP settings are configured in the running Grafana container.
+- `1` means the Node Exporter scrape succeeded.
+- `0` means the scrape failed.
 
-After changing Compose environment variables, recreate Grafana:
+This metric checks exporter connectivity. It does not establish that the Drive application is healthy.
+
+<details>
+<summary><strong>Common problems and checks</strong></summary>
+
+### Website Works Locally but Not Externally
+
+Check the current public IP, EC2 security group, permitted client IP, frontend Service, and Pod readiness.
+
+### Argo CD Is OutOfSync
+
+Review the diff, tracked branch, manifest path, image references, and latest sync result.
+
+### Image Is Unavailable
+
+Confirm the selected image was loaded into the correct Kind cluster before deployment.
+
+### Grafana Email Is Not Configured
+
+Verify SMTP environment settings and recreate Grafana after changing them:
 
 ```bash
 sudo docker compose up -d --no-deps --force-recreate grafana
 ```
 
-Use a Google app password rather than the normal Google account password.
+### Prometheus Has No Project Metrics
 
-## Challenges and Lessons
+Check the private scrape target, Node Exporter service, security group rule, and Prometheus configuration.
 
-- Resolved Docker socket permission and Compose installation issues.
-- Separated Jenkins build responsibilities from Argo CD deployment responsibilities.
-- Aligned Git manifests with deployed image versions.
-- Used a dedicated GitOps branch for deployment updates.
-- Investigated memory pressure and moved monitoring to another EC2.
-- Configured private network access to Node Exporter.
-- Configured Grafana SMTP and verified test email delivery.
-- Exported dashboards and alerts for version control.
+### Monitoring Logs
 
-## Current Limitations
+```bash
+sudo docker compose logs --tail=100 prometheus
+sudo docker compose logs --tail=100 grafana
+```
 
-- Single-node Kind cluster and single application EC2.
-- No automatic recovery from complete EC2 failure.
-- Local container images without a registry.
-- SQLite backend designed for one replica.
-- Local persistent storage without an external backup.
-- Monitoring focuses on host CPU and RAM.
-- Dashboard and alert exports require restoration steps.
-- HTTPS and production-grade credential management are not yet implemented.
+</details>
 
-## Future Improvements
+## Challenges and Solutions
 
-- Pod readiness and restart monitoring.
-- Website availability checks.
-- Application metrics and centralized logs.
-- Private image registry.
-- Automated database and upload backups with restore testing.
+| Challenge | Resolution |
+|---|---|
+| Docker socket access failed | Corrected build user permissions |
+| Docker Compose was unavailable | Installed the Compose package |
+| Git manifests differed from live images | Aligned image references and adopted GitOps updates |
+| Deployment responsibilities overlapped | Assigned builds to Jenkins and reconciliation to Argo CD |
+| Full monitoring stack caused memory pressure | Moved standalone monitoring to another EC2 |
+| Prometheus could not reach Node Exporter | Configured private access through security groups |
+| Grafana could not send email | Added SMTP configuration and verified test delivery |
+| Alert threshold was entered in the query interval field | Corrected the actual threshold and checked its YAML export |
+
+## Security and Data Handling
+
+- Keep real `.env` files and credentials outside Git.
+- Use Jenkins credentials for GitHub authentication.
+- Restrict administrative ports to intended sources.
+- Restrict Node Exporter access to the monitoring server.
+- Prometheus port `9090` is bound to localhost on the monitoring EC2.
+- Treat Docker access and Kubernetes credentials as privileged access.
+- Review screenshots before publishing personal information.
+
+## Limitations and Next Steps
+
+### Current Limits
+
+- Single-node Kind cluster.
+- One project EC2 hosts the application and CI services.
+- SQLite and local persistent storage.
+- No distributed storage replication.
+- Images are stored locally on Kind.
+- No off-server application backup.
+- Host CPU/RAM monitoring only.
+- Dashboard and alert restoration require additional steps.
+- HTTPS and production-grade secret management are unfinished.
+
+### Planned Improvements
+
+- Kubernetes Pod readiness and restart alerts.
+- Website and API availability monitoring.
+- Application request and error metrics.
+- Centralized logs.
+- Private container registry.
+- Automated backups and restore testing.
 - HTTPS and stable DNS.
-- Restricted deployment credentials.
-- Automated monitoring provisioning and deployment.
-- Multi-node deployment with an appropriate shared database and storage design.
+- Restricted Kubernetes deployment credentials.
+- Automated monitoring provisioning.
+- Multi-node deployment with an appropriate database and storage architecture.
 
-## Project Outcome
+## What This Project Demonstrates
 
-The project demonstrates application containerization, automated testing, Jenkins CI, Kubernetes deployment through Argo CD, persistent application storage, and host monitoring with email notifications.
-
-It is an end-to-end DevOps portfolio project with documented operational limits and a clear path for further improvements.
+- Containerizing a frontend and backend.
+- Running automated backend tests in CI.
+- Building traceable image versions.
+- Separating CI from GitOps deployment.
+- Deploying applications to Kubernetes.
+- Persisting application data across Pod replacement.
+- Collecting server metrics over a private network.
+- Building Grafana dashboards and configuring email alerts.
+- Investigating deployment, networking, and resource problems.
+- Documenting configuration and operational limitations.
