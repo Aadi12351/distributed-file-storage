@@ -14,7 +14,7 @@ pipeline {
         KUBE_NAMESPACE = 'drive'
         KIND_CLUSTER = 'drive'
         REPO_URL = 'https://github.com/Aadi12351/distributed-file-storage.git'
-        GITOPS_BRANCH = 'gitops'
+        GITOPS_BRANCH = 'gitops-gcp'
     }
 
     stages {
@@ -22,7 +22,7 @@ pipeline {
             steps {
                 deleteDir()
 
-                git branch: 'main',
+                git branch: 'gcp',
                     credentialsId: 'github-drive',
                     url: env.REPO_URL
 

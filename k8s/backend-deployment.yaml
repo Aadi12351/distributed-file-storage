@@ -17,7 +17,7 @@ spec:
     spec:
       initContainers:
         - name: prepare-storage
-          image: drive-backend:5f4e2f4442f0-5
+          image: drive-backend:v1
           imagePullPolicy: Never
           command: ["sh", "-c", "chown 10001:10001 /data && chmod 700 /data"]
           securityContext:
@@ -27,7 +27,7 @@ spec:
               mountPath: /data
       containers:
         - name: backend
-          image: drive-backend:5f4e2f4442f0-5
+          image: drive-backend:v1
           imagePullPolicy: Never
           ports:
             - containerPort: 8001
@@ -44,7 +44,7 @@ spec:
             - name: DATABASE_URL
               value: sqlite:////data/drive.db
             - name: CORS_ORIGINS
-              value: http://YOUR_EC2_PUBLIC_IP:8081
+              value: http://34.180.7.173:8081
             - name: MAX_UPLOAD_MB
               value: "90"
           resources:

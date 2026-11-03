@@ -15,7 +15,7 @@ spec:
     spec:
       containers:
         - name: frontend
-          image: drive-frontend:5f4e2f4442f0-5
+          image: drive-frontend:v1
           imagePullPolicy: Never
           ports:
             - containerPort: 80
